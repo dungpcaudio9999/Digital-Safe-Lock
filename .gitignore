@@ -29,3 +29,6 @@ vsim.wlf
 
 # Backup
 *.bak
+
+# Icarus Verilog
+*.vvp

@@ -1,114 +1,130 @@
-module digital_safe_lock (
-    input wire CLOCK_50,
-    input wire [7:0] SW,
-    input wire [2:0] KEY, // KEY[0]: rst_n, KEY[1]: Enter, KEY[2]: Change Pass
+module digital_safe_lock #(
+    parameter DB_DELAY = 20'd1_000_000,         // Configurable debounce delay (1 million clock cycles at 50MHz ~ 20ms). Set to 1 for simulations.
+    parameter TIMER_CYCLES = 28'd100_000_000    // Configurable 2-second timer (100 million clock cycles at 50MHz).
+)(
+    input  wire i_clk,          // System clock input (50MHz)
+    input  wire [7:0] i_sw,     // 8 toggle switches for password input
+    input  wire [2:0] i_key,    // 3 push buttons. i_key[0]: Reset, i_key[1]: Enter, i_key[2]: Change Pass. (Active Low)
     
-    output wire [0:0] LEDR, // Red LED for locked/error
-    output wire [0:0] LEDG, // Green LED for unlocked
+    output wire [0:0] o_ledr,   // Red LED indicating the safe is Locked or an Error occurred
+    output wire [0:0] o_ledg,   // Green LED indicating the safe is Unlocked
     
-    output wire [6:0] HEX2,
-    output wire [6:0] HEX1,
-    output wire [6:0] HEX0,
+    output wire [6:0] o_hex2,   // Leftmost 7-segment display
+    output wire [6:0] o_hex1,   // Middle 7-segment display
+    output wire [6:0] o_hex0,   // Rightmost 7-segment display
     
-    // SRAM interface
-    inout wire [15:0] SRAM_DQ,
-    output wire [18:0] SRAM_ADDR,
-    output wire SRAM_CE_N,
-    output wire SRAM_WE_N,
-    output wire SRAM_OE_N,
-    output wire SRAM_UB_N,
-    output wire SRAM_LB_N
+    // SRAM physical interface pins routed directly to the external SRAM chip on the board
+    inout  wire [15:0] io_sram_dq, // 16-bit Bi-directional Data bus
+    output wire [18:0] o_sram_addr,// 19-bit Address bus
+    output wire o_sram_ce_n,       // Chip Enable (Active Low)
+    output wire o_sram_we_n,       // Write Enable (Active Low)
+    output wire o_sram_oe_n,       // Output Enable (Active Low)
+    output wire o_sram_ub_n,       // Upper Byte Enable (Active Low)
+    output wire o_sram_lb_n        // Lower Byte Enable (Active Low)
 );
 
-    wire rst_n = KEY[0];
+    // Map the reset button to a dedicated wire for clarity
+    wire rst_n = i_key[0];
     
-    // Debounce buttons
-    wire enter_btn_db;
-    wire change_btn_db;
+    // --- Debouncer Instantiations ---
+    // Physical buttons bounce, creating rapid false signals. We must filter these.
     
-    button_debounce db_enter (
-        .clk(CLOCK_50),
-        .rst_n(rst_n),
-        .btn_in(KEY[1]),
-        .btn_out(enter_btn_db)
+    wire enter_btn_state; // The stable state of the Enter button
+    wire enter_tick;      // A clean 1-clock-cycle pulse when Enter is pressed
+    
+    button_debounce #(
+        .DELAY_CYCLES(DB_DELAY) // Pass down the configurable delay
+    ) db_enter (
+        .i_clk(i_clk),
+        .i_rst_n(rst_n),
+        .i_btn(i_key[1]),             // Connect physical KEY[1] (Enter)
+        .o_btn_state(enter_btn_state),
+        .o_btn_tick(enter_tick)       // Retrieve the clean pulse
     );
     
-    button_debounce db_change (
-        .clk(CLOCK_50),
-        .rst_n(rst_n),
-        .btn_in(KEY[2]),
-        .btn_out(change_btn_db)
+    wire change_btn_state; // The stable state of the Change button
+    wire change_tick;      // A clean 1-clock-cycle pulse when Change is pressed
+    
+    button_debounce #(
+        .DELAY_CYCLES(DB_DELAY) // Pass down the configurable delay
+    ) db_change (
+        .i_clk(i_clk),
+        .i_rst_n(rst_n),
+        .i_btn(i_key[2]),             // Connect physical KEY[2] (Change Password)
+        .o_btn_state(change_btn_state),
+        .o_btn_tick(change_tick)      // Retrieve the clean pulse
     );
     
-    // Edge detection for debounced buttons (active low -> detect falling edge)
-    reg enter_btn_db_reg;
-    reg change_btn_db_reg;
+    // --- SRAM Controller Instantiation ---
+    // This module handles the low-level timing requirements of the external memory chip
     
-    always @(posedge CLOCK_50 or negedge rst_n) begin
-        if (!rst_n) begin
-            enter_btn_db_reg <= 1'b1;
-            change_btn_db_reg <= 1'b1;
-        end else begin
-            enter_btn_db_reg <= enter_btn_db;
-            change_btn_db_reg <= change_btn_db;
-        end
-    end
-    
-    wire enter_tick = (enter_btn_db_reg == 1'b1) && (enter_btn_db == 1'b0);
-    wire change_tick = (change_btn_db_reg == 1'b1) && (change_btn_db == 1'b0);
-    
-    // SRAM Controller connections
-    wire sram_rd_en;
-    wire sram_wr_en;
-    wire [18:0] sram_addr;
-    wire [15:0] sram_data_in;
-    wire [15:0] sram_data_out;
-    wire sram_ready;
+    wire sram_rd_en;                  // Internal read request signal
+    wire sram_wr_en;                  // Internal write request signal
+    wire [18:0] sram_addr_internal;   // Internal address bus
+    wire [15:0] sram_data_to_ctrl;    // Data flowing from FSM into SRAM Controller
+    wire [15:0] sram_data_from_ctrl;  // Data flowing from SRAM Controller into FSM
+    wire sram_ready;                  // Handshake signal indicating memory operation is done
     
     sram_controller sram_ctrl (
-        .clk(CLOCK_50),
-        .rst_n(rst_n),
-        .rd_en(sram_rd_en),
-        .wr_en(sram_wr_en),
-        .addr_in(sram_addr),
-        .data_in(sram_data_in),
-        .data_out(sram_data_out),
-        .ready(sram_ready),
-        .SRAM_DQ(SRAM_DQ),
-        .SRAM_ADDR(SRAM_ADDR),
-        .SRAM_CE_N(SRAM_CE_N),
-        .SRAM_WE_N(SRAM_WE_N),
-        .SRAM_OE_N(SRAM_OE_N),
-        .SRAM_UB_N(SRAM_UB_N),
-        .SRAM_LB_N(SRAM_LB_N)
+        .i_clk(i_clk),
+        .i_rst_n(rst_n),
+        
+        // FSM Interface
+        .i_rd_en(sram_rd_en),
+        .i_wr_en(sram_wr_en),
+        .i_addr(sram_addr_internal),
+        .i_data(sram_data_to_ctrl),
+        .o_data(sram_data_from_ctrl),
+        .o_ready(sram_ready),
+        
+        // Physical Pins
+        .io_sram_dq(io_sram_dq),
+        .o_sram_addr(o_sram_addr),
+        .o_sram_ce_n(o_sram_ce_n),
+        .o_sram_we_n(o_sram_we_n),
+        .o_sram_oe_n(o_sram_oe_n),
+        .o_sram_ub_n(o_sram_ub_n),
+        .o_sram_lb_n(o_sram_lb_n)
     );
     
-    // Lock FSM connections
-    wire [2:0] display_state;
+    // --- Central Lock FSM Instantiation ---
+    // The "Brain" of the digital safe, managing states and password verification
     
-    lock_fsm fsm_inst (
-        .clk(CLOCK_50),
-        .rst_n(rst_n),
-        .sw_in(SW),
-        .enter_btn_tick(enter_tick),
-        .change_btn_tick(change_tick),
-        .sram_rd_en(sram_rd_en),
-        .sram_wr_en(sram_wr_en),
-        .sram_addr(sram_addr),
-        .sram_data_in(sram_data_in),
-        .sram_data_out(sram_data_out),
-        .sram_ready(sram_ready),
-        .led_red(LEDR[0]),
-        .led_green(LEDG[0]),
-        .display_state(display_state)
+    wire [2:0] display_state; // Internal bus carrying the current display code to the HEX display module
+    
+    lock_fsm #(
+        .TIMER_CYCLES(TIMER_CYCLES) // Pass down the configurable timer length
+    ) fsm_inst (
+        .i_clk(i_clk),
+        .i_rst_n(rst_n),
+        
+        // UI Inputs
+        .i_sw(i_sw),
+        .i_enter_tick(enter_tick),
+        .i_change_tick(change_tick),
+        
+        // Communication with the SRAM controller
+        .o_sram_rd_en(sram_rd_en),
+        .o_sram_wr_en(sram_wr_en),
+        .o_sram_addr(sram_addr_internal),
+        .o_sram_data_out(sram_data_to_ctrl),
+        .i_sram_data(sram_data_from_ctrl),
+        .i_sram_ready(sram_ready),
+        
+        // UI Outputs
+        .o_ledr(o_ledr[0]),
+        .o_ledg(o_ledg[0]),
+        .o_display_state(display_state)
     );
     
-    // HEX Display connections
+    // --- HEX Display Instantiation ---
+    // Translates the FSM's state codes into physical 7-segment LED patterns
+    
     hex_display hex_inst (
-        .state_in(display_state),
-        .hex2(HEX2),
-        .hex1(HEX1),
-        .hex0(HEX0)
+        .i_state(display_state), // Receives the display code from the FSM
+        .o_hex2(o_hex2),
+        .o_hex1(o_hex1),
+        .o_hex0(o_hex0)
     );
 
 endmodule

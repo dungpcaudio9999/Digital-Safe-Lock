@@ -15,14 +15,12 @@ module tb_digital_safe_lock();
     wire [6:0] HEX1;
     wire [6:0] HEX0;
     
-    // SRAM physical interface wires
-    wire [15:0] SRAM_DQ;
-    wire [19:0] SRAM_ADDR;
-    wire SRAM_CE_N;
-    wire SRAM_WE_N;
-    wire SRAM_OE_N;
-    wire SRAM_UB_N;
-    wire SRAM_LB_N;
+    // LCD physical interface wires
+    wire LCD_ON;
+    wire LCD_RS;
+    wire LCD_RW;
+    wire LCD_EN;
+    wire [7:0] LCD_DATA;
 
     // --- Device Under Test (DUT) Instantiation ---
     // Instantiate the Top Module with simulation-friendly parameters to drastically speed up the test
@@ -40,41 +38,15 @@ module tb_digital_safe_lock();
         .HEX2(HEX2),
         .HEX1(HEX1),
         .HEX0(HEX0),
-        .SRAM_DQ(SRAM_DQ),
-        .SRAM_ADDR(SRAM_ADDR),
-        .SRAM_CE_N(SRAM_CE_N),
-        .SRAM_WE_N(SRAM_WE_N),
-        .SRAM_OE_N(SRAM_OE_N),
-        .SRAM_UB_N(SRAM_UB_N),
-        .SRAM_LB_N(SRAM_LB_N)
+        .LCD_ON(LCD_ON),
+        .LCD_RS(LCD_RS),
+        .LCD_RW(LCD_RW),
+        .LCD_EN(LCD_EN),
+        .LCD_DATA(LCD_DATA)
     );
 
-    // --- Simple SRAM Behavioral Model ---
-    // This simulates the behavior of the physical external SRAM chip
-    reg [15:0] sram_mem [0:1023]; // Array representing memory (only modeling first 1024 words to save memory)
-    reg [15:0] sram_data_out;     // Buffer for data being read out
-    reg sram_drive_data;          // Control flag: 1 to drive data onto the bus, 0 to release the bus (High-Z)
-    
-    // Tri-state buffer for the bi-directional Data bus
-    assign SRAM_DQ = sram_drive_data ? sram_data_out : 16'hzzzz;
-    
-    // SRAM control logic
-    always @(*) begin
-        sram_drive_data = 1'b0;  // Default: release the bus
-        sram_data_out = 16'hxxxx;// Default: unknown data
-        
-        // If Chip Enable is asserted (Active Low)
-        if (!SRAM_CE_N) begin
-            if (!SRAM_WE_N) begin
-                // Write cycle: write the data currently on the DQ bus into the memory array
-                sram_mem[SRAM_ADDR] <= SRAM_DQ;
-            end else if (!SRAM_OE_N) begin
-                // Read cycle: fetch the data from the memory array and drive it onto the DQ bus
-                sram_drive_data = 1'b1;
-                sram_data_out = sram_mem[SRAM_ADDR];
-            end
-        end
-    end
+    // The memory is now internal to the FPGA (internal_ram), so we don't need
+    // an external SRAM behavioral model anymore.
 
     // --- Clock Generation ---
     initial begin

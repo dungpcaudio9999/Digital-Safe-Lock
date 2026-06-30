@@ -13,20 +13,20 @@ module digital_safe_lock #(
     output wire [6:0] HEX1,     // Middle 7-segment display
     output wire [6:0] HEX0,     // Rightmost 7-segment display
     
-    // SRAM physical interface pins routed directly to the external SRAM chip on the board
-    inout  wire [15:0] SRAM_DQ,    // 16-bit Bi-directional Data bus
-    output wire [19:0] SRAM_ADDR,  // 20-bit Address bus (DE2-115 has 20-bit SRAM address)
-    output wire SRAM_CE_N,         // Chip Enable (Active Low)
-    output wire SRAM_WE_N,         // Write Enable (Active Low)
-    output wire SRAM_OE_N,         // Output Enable (Active Low)
-    output wire SRAM_UB_N,         // Upper Byte Enable (Active Low)
-    output wire SRAM_LB_N          // Lower Byte Enable (Active Low)
+    // LCD physical interface pins
+    output wire LCD_ON,         // Power ON/Backlight Enable
+    output wire LCD_RS,         // Register Select
+    output wire LCD_RW,         // Read/Write
+    output wire LCD_EN,         // Enable
+    output wire [7:0] LCD_DATA  // 8-bit Data bus
 );
 
     // Turn off unused LEDs
     assign LEDR[17:1] = 17'd0;
     assign LEDG[8:1] = 8'd0;
-    assign SRAM_ADDR[19] = 1'b0; // We only use 19 bits internally (0 to 18)
+    
+    // Turn on LCD power/backlight
+    assign LCD_ON = 1'b1;
 
     // Map the reset button to a dedicated wire for clarity
     wire rst_n = KEY[0];
@@ -60,17 +60,17 @@ module digital_safe_lock #(
         .o_btn_tick(change_tick)      // Retrieve the clean pulse
     );
     
-    // --- SRAM Controller Instantiation ---
-    // This module handles the low-level timing requirements of the external memory chip
+    // --- Internal RAM Instantiation ---
+    // Replaces the physical SRAM with an internal FPGA block RAM / register to save pins and complexity
     
     wire sram_rd_en;                  // Internal read request signal
     wire sram_wr_en;                  // Internal write request signal
     wire [18:0] sram_addr_internal;   // Internal address bus
-    wire [15:0] sram_data_to_ctrl;    // Data flowing from FSM into SRAM Controller
-    wire [15:0] sram_data_from_ctrl;  // Data flowing from SRAM Controller into FSM
+    wire [15:0] sram_data_to_ctrl;    // Data flowing from FSM into RAM
+    wire [15:0] sram_data_from_ctrl;  // Data flowing from RAM into FSM
     wire sram_ready;                  // Handshake signal indicating memory operation is done
     
-    sram_controller sram_ctrl (
+    internal_ram int_ram (
         .i_clk(CLOCK_50),
         .i_rst_n(rst_n),
         
@@ -80,16 +80,7 @@ module digital_safe_lock #(
         .i_addr(sram_addr_internal),
         .i_data(sram_data_to_ctrl),
         .o_data(sram_data_from_ctrl),
-        .o_ready(sram_ready),
-        
-        // Physical Pins
-        .io_sram_dq(SRAM_DQ),
-        .o_sram_addr(SRAM_ADDR[18:0]),
-        .o_sram_ce_n(SRAM_CE_N),
-        .o_sram_we_n(SRAM_WE_N),
-        .o_sram_oe_n(SRAM_OE_N),
-        .o_sram_ub_n(SRAM_UB_N),
-        .o_sram_lb_n(SRAM_LB_N)
+        .o_ready(sram_ready)
     );
     
     // --- Central Lock FSM Instantiation ---
@@ -130,6 +121,23 @@ module digital_safe_lock #(
         .o_hex2(HEX2),
         .o_hex1(HEX1),
         .o_hex0(HEX0)
+    );
+    
+    // --- LCD Controller Instantiation ---
+    // Translates the FSM's state codes into full text messages on the 16x2 LCD
+    
+    lcd_controller #(
+        .CLK_FREQ(50_000_000)
+    ) lcd_inst (
+        .i_clk(CLOCK_50),
+        .i_rst_n(rst_n),
+        .i_state(display_state),
+        
+        // Physical LCD Pins
+        .o_lcd_rs(LCD_RS),
+        .o_lcd_rw(LCD_RW),
+        .o_lcd_en(LCD_EN),
+        .o_lcd_data(LCD_DATA)
     );
 
 endmodule

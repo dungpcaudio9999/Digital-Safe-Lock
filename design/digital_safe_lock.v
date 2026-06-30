@@ -2,29 +2,34 @@ module digital_safe_lock #(
     parameter DB_DELAY = 20'd1_000_000,         // Configurable debounce delay (1 million clock cycles at 50MHz ~ 20ms). Set to 1 for simulations.
     parameter TIMER_CYCLES = 28'd100_000_000    // Configurable 2-second timer (100 million clock cycles at 50MHz).
 )(
-    input  wire i_clk,          // System clock input (50MHz)
-    input  wire [7:0] i_sw,     // 8 toggle switches for password input
-    input  wire [2:0] i_key,    // 3 push buttons. i_key[0]: Reset, i_key[1]: Enter, i_key[2]: Change Pass. (Active Low)
+    input  wire CLOCK_50,       // System clock input (50MHz)
+    input  wire [17:0] SW,      // Toggle switches (we use SW[7:0] for password input)
+    input  wire [3:0] KEY,      // Push buttons. KEY[0]: Reset, KEY[1]: Enter, KEY[2]: Change Pass. (Active Low)
     
-    output wire [0:0] o_ledr,   // Red LED indicating the safe is Locked or an Error occurred
-    output wire [0:0] o_ledg,   // Green LED indicating the safe is Unlocked
+    output wire [17:0] LEDR,    // Red LEDs (we use LEDR[0])
+    output wire [8:0] LEDG,     // Green LEDs (we use LEDG[0])
     
-    output wire [6:0] o_hex2,   // Leftmost 7-segment display
-    output wire [6:0] o_hex1,   // Middle 7-segment display
-    output wire [6:0] o_hex0,   // Rightmost 7-segment display
+    output wire [6:0] HEX2,     // Leftmost 7-segment display
+    output wire [6:0] HEX1,     // Middle 7-segment display
+    output wire [6:0] HEX0,     // Rightmost 7-segment display
     
     // SRAM physical interface pins routed directly to the external SRAM chip on the board
-    inout  wire [15:0] io_sram_dq, // 16-bit Bi-directional Data bus
-    output wire [18:0] o_sram_addr,// 19-bit Address bus
-    output wire o_sram_ce_n,       // Chip Enable (Active Low)
-    output wire o_sram_we_n,       // Write Enable (Active Low)
-    output wire o_sram_oe_n,       // Output Enable (Active Low)
-    output wire o_sram_ub_n,       // Upper Byte Enable (Active Low)
-    output wire o_sram_lb_n        // Lower Byte Enable (Active Low)
+    inout  wire [15:0] SRAM_DQ,    // 16-bit Bi-directional Data bus
+    output wire [19:0] SRAM_ADDR,  // 20-bit Address bus (DE2-115 has 20-bit SRAM address)
+    output wire SRAM_CE_N,         // Chip Enable (Active Low)
+    output wire SRAM_WE_N,         // Write Enable (Active Low)
+    output wire SRAM_OE_N,         // Output Enable (Active Low)
+    output wire SRAM_UB_N,         // Upper Byte Enable (Active Low)
+    output wire SRAM_LB_N          // Lower Byte Enable (Active Low)
 );
 
+    // Turn off unused LEDs
+    assign LEDR[17:1] = 17'd0;
+    assign LEDG[8:1] = 8'd0;
+    assign SRAM_ADDR[19] = 1'b0; // We only use 19 bits internally (0 to 18)
+
     // Map the reset button to a dedicated wire for clarity
-    wire rst_n = i_key[0];
+    wire rst_n = KEY[0];
     
     // --- Debouncer Instantiations ---
     // Physical buttons bounce, creating rapid false signals. We must filter these.
@@ -35,9 +40,9 @@ module digital_safe_lock #(
     button_debounce #(
         .DELAY_CYCLES(DB_DELAY) // Pass down the configurable delay
     ) db_enter (
-        .i_clk(i_clk),
+        .i_clk(CLOCK_50),
         .i_rst_n(rst_n),
-        .i_btn(i_key[1]),             // Connect physical KEY[1] (Enter)
+        .i_btn(KEY[1]),               // Connect physical KEY[1] (Enter)
         .o_btn_state(enter_btn_state),
         .o_btn_tick(enter_tick)       // Retrieve the clean pulse
     );
@@ -48,9 +53,9 @@ module digital_safe_lock #(
     button_debounce #(
         .DELAY_CYCLES(DB_DELAY) // Pass down the configurable delay
     ) db_change (
-        .i_clk(i_clk),
+        .i_clk(CLOCK_50),
         .i_rst_n(rst_n),
-        .i_btn(i_key[2]),             // Connect physical KEY[2] (Change Password)
+        .i_btn(KEY[2]),               // Connect physical KEY[2] (Change Password)
         .o_btn_state(change_btn_state),
         .o_btn_tick(change_tick)      // Retrieve the clean pulse
     );
@@ -66,7 +71,7 @@ module digital_safe_lock #(
     wire sram_ready;                  // Handshake signal indicating memory operation is done
     
     sram_controller sram_ctrl (
-        .i_clk(i_clk),
+        .i_clk(CLOCK_50),
         .i_rst_n(rst_n),
         
         // FSM Interface
@@ -78,13 +83,13 @@ module digital_safe_lock #(
         .o_ready(sram_ready),
         
         // Physical Pins
-        .io_sram_dq(io_sram_dq),
-        .o_sram_addr(o_sram_addr),
-        .o_sram_ce_n(o_sram_ce_n),
-        .o_sram_we_n(o_sram_we_n),
-        .o_sram_oe_n(o_sram_oe_n),
-        .o_sram_ub_n(o_sram_ub_n),
-        .o_sram_lb_n(o_sram_lb_n)
+        .io_sram_dq(SRAM_DQ),
+        .o_sram_addr(SRAM_ADDR[18:0]),
+        .o_sram_ce_n(SRAM_CE_N),
+        .o_sram_we_n(SRAM_WE_N),
+        .o_sram_oe_n(SRAM_OE_N),
+        .o_sram_ub_n(SRAM_UB_N),
+        .o_sram_lb_n(SRAM_LB_N)
     );
     
     // --- Central Lock FSM Instantiation ---
@@ -95,11 +100,11 @@ module digital_safe_lock #(
     lock_fsm #(
         .TIMER_CYCLES(TIMER_CYCLES) // Pass down the configurable timer length
     ) fsm_inst (
-        .i_clk(i_clk),
+        .i_clk(CLOCK_50),
         .i_rst_n(rst_n),
         
         // UI Inputs
-        .i_sw(i_sw),
+        .i_sw(SW[7:0]),
         .i_enter_tick(enter_tick),
         .i_change_tick(change_tick),
         
@@ -112,8 +117,8 @@ module digital_safe_lock #(
         .i_sram_ready(sram_ready),
         
         // UI Outputs
-        .o_ledr(o_ledr[0]),
-        .o_ledg(o_ledg[0]),
+        .o_ledr(LEDR[0]),
+        .o_ledg(LEDG[0]),
         .o_display_state(display_state)
     );
     
@@ -122,9 +127,9 @@ module digital_safe_lock #(
     
     hex_display hex_inst (
         .i_state(display_state), // Receives the display code from the FSM
-        .o_hex2(o_hex2),
-        .o_hex1(o_hex1),
-        .o_hex0(o_hex0)
+        .o_hex2(HEX2),
+        .o_hex1(HEX1),
+        .o_hex0(HEX0)
     );
 
 endmodule

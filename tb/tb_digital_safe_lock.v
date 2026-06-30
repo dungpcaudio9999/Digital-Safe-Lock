@@ -5,19 +5,19 @@ module tb_digital_safe_lock();
     // --- Signal Declarations ---
     // Registers are used for signals that we generate/drive inside the testbench (Inputs to the DUT)
     reg CLOCK_50;   // 50MHz Clock
-    reg [7:0] SW;   // 8 toggle switches for password input
-    reg [2:0] KEY;  // 3 push buttons (Active Low)
+    reg [17:0] SW;  // 18 toggle switches for password input
+    reg [3:0] KEY;  // 4 push buttons (Active Low)
     
     // Wires are used to observe signals coming out of the DUT (Outputs from the DUT)
-    wire LEDR;      // Red LED
-    wire LEDG;      // Green LED
-    wire [6:0] HEX2; // 7-Segment Displays
+    wire [17:0] LEDR; // Red LEDs
+    wire [8:0] LEDG;  // Green LEDs
+    wire [6:0] HEX2;  // 7-Segment Displays
     wire [6:0] HEX1;
     wire [6:0] HEX0;
     
     // SRAM physical interface wires
     wire [15:0] SRAM_DQ;
-    wire [18:0] SRAM_ADDR;
+    wire [19:0] SRAM_ADDR;
     wire SRAM_CE_N;
     wire SRAM_WE_N;
     wire SRAM_OE_N;
@@ -32,21 +32,21 @@ module tb_digital_safe_lock();
         .DB_DELAY(20'd1),
         .TIMER_CYCLES(28'd20)
     ) dut (
-        .i_clk(CLOCK_50),
-        .i_sw(SW),
-        .i_key(KEY),
-        .o_ledr(LEDR),
-        .o_ledg(LEDG),
-        .o_hex2(HEX2),
-        .o_hex1(HEX1),
-        .o_hex0(HEX0),
-        .io_sram_dq(SRAM_DQ),
-        .o_sram_addr(SRAM_ADDR),
-        .o_sram_ce_n(SRAM_CE_N),
-        .o_sram_we_n(SRAM_WE_N),
-        .o_sram_oe_n(SRAM_OE_N),
-        .o_sram_ub_n(SRAM_UB_N),
-        .o_sram_lb_n(SRAM_LB_N)
+        .CLOCK_50(CLOCK_50),
+        .SW(SW),
+        .KEY(KEY),
+        .LEDR(LEDR),
+        .LEDG(LEDG),
+        .HEX2(HEX2),
+        .HEX1(HEX1),
+        .HEX0(HEX0),
+        .SRAM_DQ(SRAM_DQ),
+        .SRAM_ADDR(SRAM_ADDR),
+        .SRAM_CE_N(SRAM_CE_N),
+        .SRAM_WE_N(SRAM_WE_N),
+        .SRAM_OE_N(SRAM_OE_N),
+        .SRAM_UB_N(SRAM_UB_N),
+        .SRAM_LB_N(SRAM_LB_N)
     );
 
     // --- Simple SRAM Behavioral Model ---
@@ -98,7 +98,7 @@ module tb_digital_safe_lock();
     // btn_type: 1 for Enter (KEY[1]), 2 for Change (KEY[2])
     task enter_password(input [7:0] pass, input [1:0] btn_type);
         begin
-            SW = pass; // Flip the physical switches to set the password
+            SW[7:0] = pass; // Flip the physical switches to set the password
             
             if (btn_type == 1) begin
                 KEY[1] = 1'b0; // Press the 'Enter' button
@@ -126,13 +126,13 @@ module tb_digital_safe_lock();
     // Task 4: Self-checking result verifier. Automatically checks if the LEDs match our expectations.
     task check_result(input exp_ledg, input exp_ledr, input [7:0] test_id);
         begin
-            if (LEDG == exp_ledg && LEDR == exp_ledr) begin
+            if (LEDG[0] == exp_ledg && LEDR[0] == exp_ledr) begin
                 // If the outputs match expectations, print a Success message
-                $display("Pass: Test %0d (LEDG=%b, LEDR=%b)", test_id, LEDG, LEDR);
+                $display("Pass: Test %0d (LEDG=%b, LEDR=%b)", test_id, LEDG[0], LEDR[0]);
             end else begin
                 // If they don't match, print a Failure message with details and stop the simulation
                 $display("Fail: Test %0d - Expected LEDG=%b LEDR=%b, Got LEDG=%b LEDR=%b", 
-                         test_id, exp_ledg, exp_ledr, LEDG, LEDR);
+                         test_id, exp_ledg, exp_ledr, LEDG[0], LEDR[0]);
                 $stop; 
             end
         end
@@ -145,8 +145,8 @@ module tb_digital_safe_lock();
         $dumpvars(0, tb_digital_safe_lock);
 
         // Set initial, safe values for all inputs before resetting
-        SW = 8'h00;
-        KEY = 3'b111; // All buttons unpressed (Active Low)
+        SW = 18'h00000;
+        KEY = 4'b1111; // All buttons unpressed (Active Low)
         
         $display("========================================");
         $display("   DIGITAL SAFE LOCK - TESTBENCH START  ");

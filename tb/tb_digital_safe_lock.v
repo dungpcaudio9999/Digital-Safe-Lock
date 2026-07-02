@@ -62,7 +62,7 @@ module tb_digital_safe_lock();
         begin
             KEY[0] = 1'b0;       // Assert Reset (Active Low)
             #100 KEY[0] = 1'b1;  // De-assert Reset after 100ns
-            #200;                // Wait 200ns to allow the FSM to finish writing the default password to SRAM
+            #1000;               // Wait 1000ns to allow the FSM to finish writing the default password and magic number to SRAM
         end
     endtask
 
@@ -171,6 +171,65 @@ module tb_digital_safe_lock();
         $display("\n[Test 6] Unlock again with correct password (A5)");
         enter_password(8'hA5, 1);
         check_result(1'b1, 1'b0, 6);
+
+        // --- Test 7: Soft Reset (Magic Number verification) ---
+        $display("\n[Test 7] Soft Reset - Password should remain A5");
+        reset_system(); // Apply hardware reset
+        
+        $display("  > Try old default password (00) after reset");
+        enter_password(8'h00, 1);
+        check_result(1'b0, 1'b1, 71); // Expect Error
+        wait_for_display_timer();
+        
+        $display("  > Try the custom password (A5) after reset");
+        enter_password(8'hA5, 1);
+        check_result(1'b1, 1'b0, 72); // Expect Success
+        
+        // Relock
+        $display("\nLocking the safe...");
+        enter_password(8'hA5, 1);
+
+        // --- Test 8: Attempt to change password while locked ---
+        $display("\n[Test 8] Try changing password without unlocking");
+        // Safe is currently locked. Try to change password to BB.
+        enter_password(8'hBB, 2); // Press 'Change' button
+        wait_for_display_timer();
+        
+        $display("  > Verify password didn't change to BB");
+        enter_password(8'hBB, 1);
+        check_result(1'b0, 1'b1, 81); // BB should fail
+        wait_for_display_timer();
+        
+        $display("  > Verify A5 still works");
+        enter_password(8'hA5, 1);
+        check_result(1'b1, 1'b0, 82); // A5 should still work
+        
+        // Relock
+        $display("\nLocking the safe...");
+        enter_password(8'hA5, 1);
+
+        // --- Test 9: Bypass ERR state with Enter button (Early Exit) ---
+        $display("\n[Test 9] Early exit from ERR state");
+        // Enter wrong password to trigger ERR state
+        SW[7:0] = 8'h99; 
+        KEY[1] = 1'b0; // Press Enter
+        #40;
+        KEY[1] = 1'b1;
+        
+        #200; // Wait for SRAM read and transition to ERR
+        check_result(1'b0, 1'b1, 91); // Confirm we are in ERR state
+        
+        // Normally we wait 600ns here. Instead, press Enter immediately to bypass.
+        $display("  > Pressing Enter to bypass the error timer");
+        KEY[1] = 1'b0;
+        #40;
+        KEY[1] = 1'b1;
+        #100; // Wait for FSM to transition back to IDLE
+        
+        // Prove we are back in IDLE by immediately unlocking with correct password
+        $display("  > Unlocking immediately with A5");
+        enter_password(8'hA5, 1);
+        check_result(1'b1, 1'b0, 92); // Should unlock successfully without waiting 600ns
 
         // Simulation is finished
         #500;
